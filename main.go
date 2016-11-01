@@ -1,12 +1,15 @@
 package main
 
 import (
+	"html"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"path/filepath"
+	"regexp"
 	"time"
 
-	"github.com/geeksbaek/goinside"
+	"github.com/Seklfreak/goinside"
 	. "github.com/gorilla/feeds"
 	"gopkg.in/ini.v1"
 )
@@ -14,7 +17,17 @@ import (
 var (
 	BoardList    []string
 	TargetFolder string
+	RegexpUrl    *regexp.Regexp
+	ImageProxy   string
 )
+
+func imageProxyUrl(imageUrl []byte) []byte {
+	if ImageProxy != "" {
+		return []byte(ImageProxy + url.QueryEscape(string(imageUrl)))
+	} else {
+		return []byte(string(imageUrl))
+	}
+}
 
 func main() {
 	cfg, err := ini.Load("config.ini")
@@ -27,12 +40,29 @@ func main() {
 		!cfg.Section("general").HasKey("boards") {
 		cfg.Section("general").NewKey("feedfolder", "C:\\Users\\user\\Documents\\dcinside-feed-go")
 		cfg.Section("general").NewKey("boards", "board1, board2, board3")
+		cfg.Section("general").NewKey("feed image proxy", "https://your.domain/proxy.php?url=")
+		cfg.Section("general").NewKey("socks4 proxy", "127.0.0.1:9050")
 		err = cfg.SaveTo("config.ini")
 
 		if err != nil {
 			log.Fatal(err)
 		}
 		log.Println("Wrote config file, please fill out and restart the program")
+		return
+	}
+
+	if cfg.Section("general").HasKey("feed image proxy") {
+		ImageProxy = cfg.Section("general").Key("feed image proxy").String()
+	}
+
+	if cfg.Section("general").HasKey("socks4 proxy") {
+		goinside.Socks4 = cfg.Section("general").Key("socks4 proxy").String()
+	}
+
+	RegexpUrl, err = regexp.Compile(
+		`(http:\/\/[a-z0-9]+.dcinside.com\/(viewimage(Pop)?.php\\?[^"\'\<\ ]+|[a-z0-9\-\_]+\.(jpg|jpeg|png)))`)
+	if err != nil {
+		log.Fatal(err)
 		return
 	}
 
@@ -52,7 +82,7 @@ func main() {
 
 		list, err := goinside.FetchBestList(URL, 1)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalln("FetchList:", err)
 		}
 		for _, item := range list.Items {
 			article, err := item.Fetch()
@@ -70,17 +100,19 @@ func main() {
 				for _, imageUrl := range imageUrls {
 					log.Println(imageUrl)
 				}*/
+			editedContent := html.UnescapeString(string(RegexpUrl.ReplaceAllFunc([]byte(html.UnescapeString(article.Content)), imageProxyUrl)))
+
 			feed.Add(&Item{
 				Title:       article.Subject,
 				Link:        &Link{Href: article.URL},
-				Description: article.Content,
+				Description: string(html.UnescapeString(editedContent)),
 				Author:      &Author{Name: article.Name},
 				Created:     article.Date,
 				Id:          article.URL,
 			})
 		}
 
-		atom, err := feed.ToAtom()
+		atom, err := feed.ToRss()
 		if err != nil {
 			log.Fatal(err)
 		}
