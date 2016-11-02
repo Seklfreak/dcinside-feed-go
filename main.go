@@ -330,8 +330,8 @@ func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, fee
 			for _, imageUrl := range imageUrls {
 				content += fmt.Sprintf("<a href=\"%s\" target=\"_blank\"><img src=\"%s\" /><br /></a>", imageUrl, imageUrl)
 			}
-			content += "</p>"
 		}
+		content += "</p>"
 	}
 	content += article.Content
 	editedContent := html.UnescapeString(string(RegexpUrl.ReplaceAllFunc([]byte(html.UnescapeString(content)), imageProxyUrl)))
