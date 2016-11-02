@@ -7,10 +7,13 @@ import (
 	"html"
 	"io/ioutil"
 	"log"
+	"mime"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,16 +24,21 @@ import (
 )
 
 var (
-	BoardList         []string
-	TargetFolder      string
-	RegexpUrl         *regexp.Regexp
-	ImageProxy        string
-	SafeLinksFilename string
+	BoardList                 []string
+	TargetFolder              string
+	RegexpUrl                 *regexp.Regexp
+	ImageProxy                string
+	SafeLinksFilename         string
+	ImageCacheEnabled         bool
+	ImageCacheLocation        string
+	ImageCachePublicUrl       string
+	ImageCacheDeleteAfterDays int
 )
 
 const (
 	MaxConcurrentBoardRequests   = 2
 	MaxConcurrentArticleRequests = 4
+	MaxConcurrentImageDownloads  = 4
 )
 
 func stringAlreadyInFile(filename string, needle string) bool {
@@ -89,9 +97,13 @@ func main() {
 		!cfg.Section("general").HasKey("boards") {
 		cfg.Section("general").NewKey("feedfolder", "C:\\Users\\user\\Documents\\dcinside-feed-go")
 		cfg.Section("general").NewKey("boards", "board1, board2, board3")
-		cfg.Section("general").NewKey("feed image proxy", "\"https://your.domain/proxy.php?url=\"")
+		cfg.Section("general").NewKey("feed image proxy", "\"https://your.domain/dcinside-feed-go/imageproxy.php?url=\"")
 		cfg.Section("general").NewKey("safe links file", "C:\\Users\\user\\Documents\\dcinside-feed-go\\safelinks.txt")
 		cfg.Section("general").NewKey("socks4 proxy", "127.0.0.1:9050")
+		cfg.Section("image cache").NewKey("enabled", "false")
+		cfg.Section("image cache").NewKey("location", "C:\\Users\\user\\Documents\\dcinside-feed-go\\image-cache")
+		cfg.Section("image cache").NewKey("cache public url", "https://your.domain/dcinside-feed-go/image-cache/")
+		cfg.Section("image cache").NewKey("delete after days", "7")
 		err = cfg.SaveTo("config.ini")
 
 		if err != nil {
@@ -115,9 +127,35 @@ func main() {
 			log.Printf("safe links file created: %s", SafeLinksFilename)
 		}
 	}
-
 	if cfg.Section("general").HasKey("socks4 proxy") {
 		goinside.Socks4 = cfg.Section("general").Key("socks4 proxy").String()
+	}
+	ImageCacheEnabled = false
+	if cfg.Section("image cache").HasKey("enabled") {
+		if cfg.Section("image cache").Key("enabled").MustBool() == true &&
+			cfg.Section("image cache").HasKey("location") &&
+			cfg.Section("image cache").HasKey("cache public url") &&
+			cfg.Section("image cache").HasKey("delete after days") {
+			ImageCacheEnabled = true
+			ImageCacheLocation = cfg.Section("image cache").Key("location").String()
+			ImageCachePublicUrl = cfg.Section("image cache").Key("cache public url").String()
+			ImageCacheDeleteAfterDays = cfg.Section("image cache").Key("delete after days").MustInt()
+			err := os.MkdirAll(ImageCacheLocation, 755)
+			if err != nil {
+				log.Println(err)
+			}
+			// remove old files
+			maxAge := float64(ImageCacheDeleteAfterDays * 24)
+			files, _ := ioutil.ReadDir(ImageCacheLocation)
+			for _, f := range files {
+				if f.IsDir() == false {
+					if time.Since(f.ModTime()).Hours() > maxAge {
+						log.Printf("removing file %s from cache because it's too old", f.Name())
+						os.Remove(ImageCacheLocation + string(filepath.Separator) + f.Name())
+					}
+				}
+			}
+		}
 	}
 
 	RegexpUrl, err = regexp.Compile(
@@ -179,6 +217,80 @@ func createFeedForBoard(semCreateFeeds <-chan bool, board string) {
 	}
 }
 
+func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageUrl string) {
+	defer func() { <-semCacheImage }()
+
+	response, err := http.Get(imageUrl)
+	defer response.Body.Close()
+	if err != nil {
+		log.Println(err)
+		cCachedImageUrl <- imageUrl
+		return
+	}
+
+	filename := ""
+	var contentLength int64
+	for key, value := range response.Header {
+		if key == "Content-Disposition" {
+			_, params, err := mime.ParseMediaType(value[0])
+			filename = params["filename"]
+			if err != nil {
+				log.Println(err)
+				cCachedImageUrl <- imageUrl
+				return
+			}
+		}
+		if key == "Content-Length" {
+			contentLength, err = strconv.ParseInt(value[0], 10, 64)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
+	if filename == "" {
+		log.Printf("unable to gather filename for url: %s", imageUrl)
+		cCachedImageUrl <- imageUrl
+		return
+	}
+
+	completePath := ImageCacheLocation + string(os.PathSeparator) + filename
+
+	if fileStat, err := os.Stat(completePath); err == nil {
+		if fileStat.Size() == contentLength { // File already downloaded
+			newImageUrl := fmt.Sprintf("%s%s", ImageCachePublicUrl, filename)
+			cCachedImageUrl <- newImageUrl
+			return
+		}
+		tmpPath := completePath
+		i := 1
+		for {
+			completePath = tmpPath[0:len(tmpPath)-len(filepath.Ext(tmpPath))] +
+				"-" + strconv.Itoa(i) + filepath.Ext(tmpPath)
+			if _, err := os.Stat(completePath); os.IsNotExist(err) {
+				break
+			}
+			i = i + 1
+		}
+	}
+
+	bodyOfResp, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		log.Println(err)
+		cCachedImageUrl <- imageUrl
+		return
+	}
+
+	err = ioutil.WriteFile(completePath, bodyOfResp, 0644)
+	if err != nil {
+		log.Println(err)
+		cCachedImageUrl <- imageUrl
+		return
+	}
+
+	newImageUrl := fmt.Sprintf("%s%s", ImageCachePublicUrl, filename)
+	cCachedImageUrl <- newImageUrl
+}
+
 func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, feed *Feed) {
 	defer func() { <-semArticleToFeed }()
 
@@ -200,10 +312,26 @@ func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, fee
 	content := ""
 	if len(imageUrls) > 0 {
 		content += "<p><b>Embedded images:</b><br />"
-		for _, imageUrl := range imageUrls {
-			content += fmt.Sprintf("<a href=\"%s\" target=\"_blank\"><img src=\"%s\" /><br /></a>", imageUrl, imageUrl)
+		if ImageCacheEnabled == true {
+			semCacheImage := make(chan bool, MaxConcurrentImageDownloads)
+			cCachedImageUrl := make(chan string, len(imageUrls))
+			for _, imageUrl := range imageUrls { // Start image downloads
+				semCacheImage <- true
+				go cacheImage(semCacheImage, cCachedImageUrl, imageUrl)
+			}
+			for i := 0; i < cap(semCacheImage); i++ { // Wait for all downloads to finish
+				semCacheImage <- true
+			}
+			for i := 0; i < cap(cCachedImageUrl); i++ { // Write new cached urls to feed
+				cachedImageUrl := <-cCachedImageUrl
+				content += fmt.Sprintf("<a href=\"%s\" target=\"_blank\"><img src=\"%s\" /><br /></a>", cachedImageUrl, cachedImageUrl)
+			}
+		} else {
+			for _, imageUrl := range imageUrls {
+				content += fmt.Sprintf("<a href=\"%s\" target=\"_blank\"><img src=\"%s\" /><br /></a>", imageUrl, imageUrl)
+			}
+			content += "</p>"
 		}
-		content += "</p>"
 	}
 	content += article.Content
 	editedContent := html.UnescapeString(string(RegexpUrl.ReplaceAllFunc([]byte(html.UnescapeString(content)), imageProxyUrl)))
