@@ -41,51 +41,6 @@ const (
 	MaxConcurrentImageDownloads  = 4
 )
 
-func stringAlreadyInFile(filename string, needle string) bool {
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), needle) {
-			return true
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalln(err)
-	}
-	return false
-}
-
-func imageProxyUrl(imageUrl []byte) []byte {
-	if ImageProxy != "" {
-		if SafeLinksFilename != "" {
-			hasher := md5.New()
-			hasher.Write(imageUrl)
-			md5sum := hex.EncodeToString(hasher.Sum(nil))
-			if stringAlreadyInFile(SafeLinksFilename, md5sum) == false {
-				f, err := os.OpenFile(SafeLinksFilename, os.O_APPEND|os.O_WRONLY, 0666)
-				if err != nil {
-					log.Fatalln(err)
-				}
-
-				defer f.Close()
-
-				if _, err = f.WriteString(md5sum + "\n"); err != nil {
-					log.Fatalln(err)
-				}
-			}
-		}
-		return []byte(ImageProxy + url.QueryEscape(string(imageUrl)))
-	} else {
-		return []byte(string(imageUrl))
-	}
-}
-
 func main() {
 	cfg, err := ini.Load("config.ini")
 	if err != nil {
@@ -176,6 +131,51 @@ func main() {
 	}
 	for i := 0; i < cap(semCreateFeeds); i++ {
 		semCreateFeeds <- true
+	}
+}
+
+func stringAlreadyInFile(filename string, needle string) bool {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), needle) {
+			return true
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatalln(err)
+	}
+	return false
+}
+
+func imageProxyUrl(imageUrl string) string {
+	if ImageProxy != "" {
+		if SafeLinksFilename != "" {
+			hasher := md5.New()
+			hasher.Write([]byte(imageUrl))
+			md5sum := hex.EncodeToString(hasher.Sum(nil))
+			if stringAlreadyInFile(SafeLinksFilename, md5sum) == false {
+				f, err := os.OpenFile(SafeLinksFilename, os.O_APPEND|os.O_WRONLY, 0666)
+				if err != nil {
+					log.Fatalln(err)
+				}
+
+				defer f.Close()
+
+				if _, err = f.WriteString(md5sum + "\n"); err != nil {
+					log.Fatalln(err)
+				}
+			}
+		}
+		return ImageProxy + url.QueryEscape(imageUrl)
+	} else {
+		return imageUrl
 	}
 }
 
@@ -294,74 +294,47 @@ func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageU
 func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, feed *Feed) {
 	defer func() { <-semArticleToFeed }()
 
-	cArticle := make(chan *goinside.Article)
-	cImageUrls := make(chan []string)
+	article := fetchArticle(item)
 
-	go fetchArticle(cArticle, item)
-	go fetchImageUrls(cImageUrls, item)
+	content := article.Content
+	content = strings.Replace(content, "&amp;", "&", -1) // temporary fix TODO: better solution
 
-	var article *goinside.Article
-	var imageUrls []string
-	for i := 0; i <= 1; i++ {
-		select {
-		case article = <-cArticle:
-		case imageUrls = <-cImageUrls:
+	imageUrls := RegexpUrl.FindAllString(content, -1)
+
+	if ImageCacheEnabled == true {
+		semCacheImage := make(chan bool, MaxConcurrentImageDownloads)
+		cCachedImageUrl := make(chan string, len(imageUrls))
+		for _, imageUrl := range imageUrls { // Start image downloads
+			semCacheImage <- true
+			go cacheImage(semCacheImage, cCachedImageUrl, imageUrl)
+		}
+		for i := 0; i < cap(semCacheImage); i++ { // Wait for all downloads to finish
+			semCacheImage <- true
+		}
+		for i := 0; i < cap(cCachedImageUrl); i++ { // Write new cached urls to feed content
+			cachedImageUrl := <-cCachedImageUrl
+			content = strings.Replace(content, imageUrls[i], cachedImageUrl, 1)
+		}
+	} else {
+		for _, imageUrl := range imageUrls {
+			content = strings.Replace(content, imageUrl, imageProxyUrl(imageUrl), 1)
 		}
 	}
-
-	content := ""
-	if len(imageUrls) > 0 {
-		content += "<p><b>Embedded images:</b><br />"
-		if ImageCacheEnabled == true {
-			semCacheImage := make(chan bool, MaxConcurrentImageDownloads)
-			cCachedImageUrl := make(chan string, len(imageUrls))
-			for _, imageUrl := range imageUrls { // Start image downloads
-				semCacheImage <- true
-				go cacheImage(semCacheImage, cCachedImageUrl, imageUrl)
-			}
-			for i := 0; i < cap(semCacheImage); i++ { // Wait for all downloads to finish
-				semCacheImage <- true
-			}
-			for i := 0; i < cap(cCachedImageUrl); i++ { // Write new cached urls to feed
-				cachedImageUrl := <-cCachedImageUrl
-				content += fmt.Sprintf("<a href=\"%s\" target=\"_blank\"><img src=\"%s\" /><br /></a>", cachedImageUrl, cachedImageUrl)
-			}
-		} else {
-			for _, imageUrl := range imageUrls {
-				content += fmt.Sprintf("<a href=\"%s\" target=\"_blank\"><img src=\"%s\" /><br /></a>", imageUrl, imageUrl)
-			}
-		}
-		content += "</p>"
-	}
-	content += article.Content
-	editedContent := html.UnescapeString(string(RegexpUrl.ReplaceAllFunc([]byte(html.UnescapeString(content)), imageProxyUrl)))
 
 	feed.Add(&Item{
 		Title:       article.Subject,
 		Link:        &Link{Href: article.URL},
-		Description: string(html.UnescapeString(editedContent)),
+		Description: html.UnescapeString(content),
 		Author:      &Author{Name: article.Name},
 		Created:     article.Date,
 		Id:          article.URL,
 	})
 }
 
-func fetchArticle(channel chan<- *goinside.Article, item *goinside.ListItem) {
+func fetchArticle(item *goinside.ListItem) *goinside.Article {
 	article, err := item.Fetch()
 	if err != nil {
 		log.Fatal(err)
 	}
-	channel <- article
-}
-
-func fetchImageUrls(channel chan<- []string, item *goinside.ListItem) {
-	if item.HasImage {
-		imageUrls, err := item.FetchImageURLs()
-		if err != nil {
-			log.Fatal(err)
-		}
-		channel <- imageUrls
-	} else {
-		channel <- make([]string, 0)
-	}
+	return article
 }
