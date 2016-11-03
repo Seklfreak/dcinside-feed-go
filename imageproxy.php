@@ -40,7 +40,9 @@ if (isset($configIniArray['safe links file']) && $configIniArray['safe links fil
     } else {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $_GET['url']);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.13) Gecko/20080311 Firefox/2.0.0.13');
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozi
+            lla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.13) Gecko/20080311 Firefox/2.0.0.13');        curl_setopt($ch, CURLOPT_URL, $_GET['url']);
+        curl_setopt($ch, CURLOPT_REFERER, 'http://gall.dcinside.com/');
         curl_setopt($ch, CURLOPT_TIMEOUT, 60);
         curl_setopt($ch, CURLOPT_HEADER, true);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
@@ -65,8 +67,9 @@ if (isset($configIniArray['safe links file']) && $configIniArray['safe links fil
                     $filename = trim($mDispo['f'],' ";');
                 }
 
-                if (isset($MimeTypes[pathinfo($filename, PATHINFO_EXTENSION)])) {
-                    $contentType = $MimeTypes[pathinfo($filename, PATHINFO_EXTENSION)];
+                $contentType = "application/octet-stream";
+                if (isset($MimeTypes[strtolower(pathinfo($filename, PATHINFO_EXTENSION))])) {
+                    $contentType = $MimeTypes[strtolower(pathinfo($filename, PATHINFO_EXTENSION))];
                 }
 
                 header('Content-Type: '.$contentType);
