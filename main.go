@@ -155,28 +155,24 @@ func stringAlreadyInFile(filename string, needle string) bool {
 }
 
 func imageProxyUrl(imageUrl string) string {
-	if ImageProxy != "" {
-		if SafeLinksFilename != "" {
-			hasher := md5.New()
-			hasher.Write([]byte(imageUrl))
-			md5sum := hex.EncodeToString(hasher.Sum(nil))
-			if stringAlreadyInFile(SafeLinksFilename, md5sum) == false {
-				f, err := os.OpenFile(SafeLinksFilename, os.O_APPEND|os.O_WRONLY, 0666)
-				if err != nil {
-					log.Fatalln(err)
-				}
+	if SafeLinksFilename != "" {
+		hasher := md5.New()
+		hasher.Write([]byte(imageUrl))
+		md5sum := hex.EncodeToString(hasher.Sum(nil))
+		if stringAlreadyInFile(SafeLinksFilename, md5sum) == false {
+			f, err := os.OpenFile(SafeLinksFilename, os.O_APPEND|os.O_WRONLY, 0666)
+			if err != nil {
+				log.Fatalln(err)
+			}
 
-				defer f.Close()
+			defer f.Close()
 
-				if _, err = f.WriteString(md5sum + "\n"); err != nil {
-					log.Fatalln(err)
-				}
+			if _, err = f.WriteString(md5sum + "\n"); err != nil {
+				log.Fatalln(err)
 			}
 		}
-		return ImageProxy + url.QueryEscape(imageUrl)
-	} else {
-		return imageUrl
 	}
+	return ImageProxy + url.QueryEscape(imageUrl)
 }
 
 func createFeedForBoard(semCreateFeeds <-chan bool, board string) {
@@ -319,8 +315,11 @@ func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, fee
 			if len(cachedImageUrl) == 2 {
 				content = strings.Replace(content, cachedImageUrl[0], cachedImageUrl[1], 1)
 			}
+			if len(cachedImageUrl) == 1 && ImageProxy != "" {
+				content = strings.Replace(content, cachedImageUrl[0], imageProxyUrl(cachedImageUrl[0]), 1)
+			}
 		}
-	} else {
+	} else if ImageProxy != "" {
 		for _, imageUrl := range imageUrls {
 			content = strings.Replace(content, imageUrl, imageProxyUrl(imageUrl), 1)
 		}
