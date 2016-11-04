@@ -217,16 +217,16 @@ func createFeedForBoard(semCreateFeeds <-chan bool, board string) {
 	}
 }
 
-func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageUrl string) {
+func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- []string, imageUrl string) {
 	defer func() { <-semCacheImage }()
 
 	response, err := http.Get(imageUrl)
-	defer response.Body.Close()
 	if err != nil {
 		log.Println(err)
-		cCachedImageUrl <- imageUrl
+		cCachedImageUrl <- []string{imageUrl}
 		return
 	}
+	defer response.Body.Close()
 
 	filename := ""
 	var contentLength int64
@@ -236,7 +236,7 @@ func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageU
 			filename = params["filename"]
 			if err != nil {
 				log.Println(err)
-				cCachedImageUrl <- imageUrl
+				cCachedImageUrl <- []string{imageUrl}
 				return
 			}
 		}
@@ -249,7 +249,7 @@ func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageU
 	}
 	if filename == "" {
 		log.Printf("unable to gather filename for url: %s", imageUrl)
-		cCachedImageUrl <- imageUrl
+		cCachedImageUrl <- []string{imageUrl}
 		return
 	}
 
@@ -258,7 +258,7 @@ func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageU
 	if fileStat, err := os.Stat(completePath); err == nil {
 		if fileStat.Size() == contentLength { // File already downloaded
 			newImageUrl := fmt.Sprintf("%s%s", ImageCachePublicUrl, filename)
-			cCachedImageUrl <- newImageUrl
+			cCachedImageUrl <- []string{imageUrl, newImageUrl}
 			return
 		}
 		tmpPath := completePath
@@ -276,19 +276,19 @@ func cacheImage(semCacheImage <-chan bool, cCachedImageUrl chan<- string, imageU
 	bodyOfResp, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		log.Println(err)
-		cCachedImageUrl <- imageUrl
+		cCachedImageUrl <- []string{imageUrl}
 		return
 	}
 
 	err = ioutil.WriteFile(completePath, bodyOfResp, 0644)
 	if err != nil {
 		log.Println(err)
-		cCachedImageUrl <- imageUrl
+		cCachedImageUrl <- []string{imageUrl}
 		return
 	}
 
 	newImageUrl := fmt.Sprintf("%s%s", ImageCachePublicUrl, filename)
-	cCachedImageUrl <- newImageUrl
+	cCachedImageUrl <- []string{imageUrl, newImageUrl}
 }
 
 func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, feed *Feed) {
@@ -297,13 +297,16 @@ func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, fee
 	article := fetchArticle(item)
 
 	content := article.Content
+
+	content = strings.Replace(content, "&amp;", "&", -1) // temporary fix TODO: better solution
+	content = strings.Replace(content, "&amp;", "&", -1) // temporary fix TODO: better solution
 	content = strings.Replace(content, "&amp;", "&", -1) // temporary fix TODO: better solution
 
 	imageUrls := RegexpUrl.FindAllString(content, -1)
 
 	if ImageCacheEnabled == true {
 		semCacheImage := make(chan bool, MaxConcurrentImageDownloads)
-		cCachedImageUrl := make(chan string, len(imageUrls))
+		cCachedImageUrl := make(chan []string, len(imageUrls))
 		for _, imageUrl := range imageUrls { // Start image downloads
 			semCacheImage <- true
 			go cacheImage(semCacheImage, cCachedImageUrl, imageUrl)
@@ -313,7 +316,9 @@ func addArticleToFeed(semArticleToFeed <-chan bool, item *goinside.ListItem, fee
 		}
 		for i := 0; i < cap(cCachedImageUrl); i++ { // Write new cached urls to feed content
 			cachedImageUrl := <-cCachedImageUrl
-			content = strings.Replace(content, imageUrls[i], cachedImageUrl, 1)
+			if len(cachedImageUrl) == 2 {
+				content = strings.Replace(content, cachedImageUrl[0], cachedImageUrl[1], 1)
+			}
 		}
 	} else {
 		for _, imageUrl := range imageUrls {
