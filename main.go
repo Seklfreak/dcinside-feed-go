@@ -58,7 +58,7 @@ func main() {
 		cfg.Section("image cache").NewKey("enabled", "false")
 		cfg.Section("image cache").NewKey("location", "C:\\Users\\user\\Documents\\dcinside-feed-go\\image-cache")
 		cfg.Section("image cache").NewKey("cache public url", "https://your.domain/dcinside-feed-go/image-cache/")
-		cfg.Section("image cache").NewKey("delete after days", "7")
+		cfg.Section("image cache").NewKey("delete after days", "3")
 		err = cfg.SaveTo("config.ini")
 
 		if err != nil {
@@ -95,7 +95,7 @@ func main() {
 			ImageCacheLocation = cfg.Section("image cache").Key("location").String()
 			ImageCachePublicUrl = cfg.Section("image cache").Key("cache public url").String()
 			ImageCacheDeleteAfterDays = cfg.Section("image cache").Key("delete after days").MustInt()
-			err := os.MkdirAll(ImageCacheLocation, 755)
+			err := os.MkdirAll(ImageCacheLocation, 0755)
 			if err != nil {
 				log.Println(err)
 			}
