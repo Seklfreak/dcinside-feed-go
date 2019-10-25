@@ -32,3 +32,5 @@ crossbuild.bat
 safelinks.txt
 
 testfolder/*
+
+deploy.sh
