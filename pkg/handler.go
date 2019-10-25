@@ -5,11 +5,31 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/Seklfreak/ginside"
 	"github.com/gorilla/feeds"
+	"go.uber.org/zap"
 )
 
-var alphaNumeric = regexp.MustCompile("^[a-zA-Z0-9_]*$")
+var (
+	client *ginside.GInside
+	logger *zap.Logger
+
+	alphaNumeric = regexp.MustCompile("^[a-zA-Z0-9_]*$")
+)
+
+func init() {
+	var err error
+	client = ginside.NewGInside(&http.Client{
+		Timeout: 60 * time.Second,
+	})
+
+	logger, err = zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+}
 
 func Handler(w http.ResponseWriter, r *http.Request) {
 	boards := r.URL.Query()["board"]
@@ -25,7 +45,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := getClient().BoardPosts(r.Context(), board, true)
+	posts, err := client.BoardPosts(r.Context(), board, true)
 	if err != nil {
 		if strings.Contains(err.Error(), "unexpected status code: 404") {
 			http.NotFound(w, r)
@@ -42,15 +62,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	var title string
 	for _, post := range posts {
-		title = post.Title
-		if post.Subject != "" {
-			title = fmt.Sprintf("[%s] %s", post.Subject, title)
+		if len(feed.Items) > 5 {
+			break
 		}
 
-		feed.Items = append(feed.Items, &feeds.Item{
-			Title: title,
+		item := &feeds.Item{
 			Link: &feeds.Link{
 				Href: post.URL,
 			},
@@ -58,7 +75,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				Name: post.Author,
 			},
 			Created: post.Date,
-		})
+		}
+
+		item.Title = post.Title
+		if post.Subject != "" {
+			item.Title = fmt.Sprintf("[%s] %s", post.Subject, item.Title)
+		}
+
+		details, err := client.PostDetails(r.Context(), post.URL)
+		if err != nil {
+			logger.Warn("error querying post details", zap.Error(err))
+		} else {
+			item.Content = details.ContentHTML
+			if len(details.Attachments) > 0 && item.Content != "" {
+				item.Content += "<br/>"
+			}
+			for _, attachment := range details.Attachments {
+				item.Content += fmt.Sprintf("<a href=\"%s\">Download %s</a><br/>", attachment.URL, attachment.Filename)
+			}
+		}
+
+		feed.Items = append(feed.Items, item)
 	}
 
 	w.Header().Set("Content-Type", "application/atom+xml")
