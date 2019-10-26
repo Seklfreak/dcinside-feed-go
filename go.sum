@@ -1,7 +1,7 @@
 github.com/PuerkitoBio/goquery v1.5.0 h1:uGvmFXOA73IKluu/F84Xd1tt/z07GYm8X49XKHP7EJk=
 github.com/PuerkitoBio/goquery v1.5.0/go.mod h1:qD2PgZ9lccMbQlc7eEOjaeRlFQON7xY8kdmcsrnKqMg=
-github.com/Seklfreak/ginside v0.0.0-20191025211204-0393ea80b856 h1:7dZsDDuiaH0NjKxTJ4QDh7hAuWuz2XOyXz7QlCpF7b8=
-github.com/Seklfreak/ginside v0.0.0-20191025211204-0393ea80b856/go.mod h1:8qsq6mWde1YA5QOHDTDwue0MRjTw57fOug7qqMJpHhA=
+github.com/Seklfreak/ginside v0.0.0-20191026115949-9c193065876c h1:m8ZSWTxmtadGMgTq114AeKEbw62FKLahGGcXcaGPZ28=
+github.com/Seklfreak/ginside v0.0.0-20191026115949-9c193065876c/go.mod h1:8qsq6mWde1YA5QOHDTDwue0MRjTw57fOug7qqMJpHhA=
 github.com/andybalholm/cascadia v1.0.0 h1:hOCXnnZ5A+3eVDX8pvgl4kofXv2ELss0bKcqRySc45o=
 github.com/andybalholm/cascadia v1.0.0/go.mod h1:GsXiBklL0woXo1j/WYWtSYYC4ouU9PqHO0sqidkEA4Y=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
