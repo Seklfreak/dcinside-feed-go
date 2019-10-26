@@ -5,33 +5,14 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
-	"github.com/Seklfreak/ginside"
 	"github.com/gorilla/feeds"
 	"go.uber.org/zap"
 )
 
-var (
-	client *ginside.GInside
-	logger *zap.Logger
+var alphaNumeric = regexp.MustCompile(`^[a-zA-Z0-9_]*$`)
 
-	alphaNumeric = regexp.MustCompile("^[a-zA-Z0-9_]*$")
-)
-
-func init() {
-	var err error
-	client = ginside.NewGInside(&http.Client{
-		Timeout: 60 * time.Second,
-	})
-
-	logger, err = zap.NewProduction()
-	if err != nil {
-		panic(err)
-	}
-}
-
-func Handler(w http.ResponseWriter, r *http.Request) {
+func FeedHandler(w http.ResponseWriter, r *http.Request) {
 	boards := r.URL.Query()["board"]
 	if len(boards) <= 0 {
 		http.Error(w, "no board specified", http.StatusBadRequest)
@@ -40,12 +21,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	board := boards[0]
 
-	if !alphaNumeric.MatchString(board) {
+	if board == "" || !alphaNumeric.MatchString(board) {
 		http.Error(w, "invalid board name specified", http.StatusBadRequest)
 		return
 	}
 
-	posts, err := client.BoardPosts(r.Context(), board, true)
+	posts, err := ginsideClient.BoardPosts(r.Context(), board, true)
 	if err != nil {
 		if strings.Contains(err.Error(), "unexpected status code: 404") {
 			http.NotFound(w, r)
@@ -82,7 +63,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			item.Title = fmt.Sprintf("[%s] %s", post.Subject, item.Title)
 		}
 
-		details, err := client.PostDetails(r.Context(), post.URL)
+		details, err := ginsideClient.PostDetails(r.Context(), post.URL)
 		if err != nil {
 			logger.Warn("error querying post details", zap.Error(err))
 		} else {

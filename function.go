@@ -9,12 +9,17 @@ import (
 	"github.com/Seklfreak/dcinside-feed-go/pkg"
 )
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	pkg.Handler(w, r)
+func feedHandler(w http.ResponseWriter, r *http.Request) {
+	pkg.FeedHandler(w, r)
+}
+
+func proxyHandler(w http.ResponseWriter, r *http.Request) {
+	pkg.ProxyHandler(w, r)
 }
 
 func main() {
-	http.HandleFunc("/", handler)
+	http.HandleFunc("/", feedHandler)
+	http.HandleFunc("/proxy", proxyHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
