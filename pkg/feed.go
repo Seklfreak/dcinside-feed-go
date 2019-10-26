@@ -3,9 +3,12 @@ package pkg
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gorilla/feeds"
 	"go.uber.org/zap"
 )
@@ -24,6 +27,12 @@ func FeedHandler(w http.ResponseWriter, r *http.Request) {
 	if board == "" || !alphaNumeric.MatchString(board) {
 		http.Error(w, "invalid board name specified", http.StatusBadRequest)
 		return
+	}
+
+	var proxy bool
+	proxys := r.URL.Query()["proxy"]
+	if len(proxys) > 0 {
+		proxy, _ = strconv.ParseBool(proxys[0])
 	}
 
 	posts, err := ginsideClient.BoardPosts(r.Context(), board, true)
@@ -68,6 +77,9 @@ func FeedHandler(w http.ResponseWriter, r *http.Request) {
 			logger.Warn("error querying post details", zap.Error(err))
 		} else {
 			item.Content = details.ContentHTML
+			if proxy {
+				item.Content = rewriteHTMLForProxy(r, item.Content)
+			}
 			if len(details.Attachments) > 0 && item.Content != "" {
 				item.Content += "<br/>"
 			}
@@ -91,4 +103,39 @@ func FeedHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+func rewriteHTMLForProxy(r *http.Request, input string) string {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(input))
+	if err != nil {
+		return input
+	}
+
+	attachments := doc.Find("img")
+	attachments.Each(func(i int, selection *goquery.Selection) {
+		imgSrc, _ := selection.Attr("src")
+		if imgSrc == "" {
+			return
+		}
+
+		if !dcinsideImageURL.MatchString(imgSrc) {
+			return
+		}
+
+		var newURL url.URL
+		newURL.Path = "/proxy"
+
+		query := make(url.Values)
+		query.Set("url", imgSrc)
+		newURL.RawQuery = query.Encode()
+
+		selection.SetAttr("src", newURL.String())
+	})
+
+	html, err := doc.Html()
+	if err != nil {
+		return input
+	}
+
+	return html
 }

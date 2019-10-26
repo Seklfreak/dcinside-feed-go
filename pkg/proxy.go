@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"fmt"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -28,8 +27,6 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid url specified", http.StatusBadRequest)
 		return
 	}
-
-	fmt.Println(link)
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, link, nil)
 	if err != nil {
