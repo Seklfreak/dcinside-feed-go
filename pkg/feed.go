@@ -123,6 +123,7 @@ func rewriteHTMLForProxy(r *http.Request, input string) string {
 		}
 
 		var newURL url.URL
+		newURL.Host = r.Host
 		newURL.Path = "/proxy"
 
 		query := make(url.Values)
