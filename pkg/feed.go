@@ -46,7 +46,7 @@ func FeedHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	feed := &feeds.Feed{
-		Title: fmt.Sprintf("gall.dcinside.com: %s", board),
+		Title: fmt.Sprintf("Gall: %s", board),
 		Link: &feeds.Link{
 			Href: fmt.Sprintf("https://gall.dcinside.com/board/lists/?id=%s", board),
 		},
